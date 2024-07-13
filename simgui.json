@@ -1,0 +1,29 @@
+{
+  "NTProvider": {
+    "types": {
+      "/FMSInfo": "FMSInfo",
+      "/Pose": "Field2d",
+      "/Shuffleboard/1: Verify Odometry/VerifyOdometryCommand": "Command",
+      "/Shuffleboard/2: Current Limits/TuneCurrentLimitCommand": "Command",
+      "/Shuffleboard/3: Static Feedforward/StaticFeedforwardCommand": "Command",
+      "/Shuffleboard/4: Velocity Feedforward/VelocityFeedforwardCommand": "Command",
+      "/Shuffleboard/5: Velocity P/TuneVelocityPCommand": "Command"
+    }
+  },
+  "NetworkTables": {
+    "transitory": {
+      "Shuffleboard": {
+        "5: Velocity P": {
+          "TuneVelocityPCommand": {
+            "open": true
+          },
+          "open": true
+        },
+        "open": true
+      }
+    }
+  },
+  "NetworkTables Info": {
+    "visible": true
+  }
+}
