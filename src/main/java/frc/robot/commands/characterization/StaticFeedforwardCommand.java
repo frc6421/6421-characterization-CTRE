@@ -77,6 +77,8 @@ public class StaticFeedforwardCommand extends Command {
     // Can add "".withModuleDirection(Rotation2D)" to turn all modules to a specific
     // angle if other directions want to be tested
     driveSubsystem.setControl(zeroWheelRequest);
+    driveSubsystem.seedFieldRelative();
+    driveSubsystem.tareEverything();
 
     // Set chassis speed to zero each time the command starts
     setChassisSpeeds = new ChassisSpeeds();
@@ -118,7 +120,7 @@ public class StaticFeedforwardCommand extends Command {
   @Override
   public boolean isFinished() {
     // Return true if robot moves 1 cm
-    return driveSubsystem.getState().Pose.getX() >= ROBOT_IS_MOVING_METERS;
+    return Math.abs(driveSubsystem.getState().Pose.getX()) >= ROBOT_IS_MOVING_METERS;
   }
 
   @Override
@@ -129,6 +131,7 @@ public class StaticFeedforwardCommand extends Command {
     builder.addDoubleProperty("Module 1 voltage", () -> moduleVoltage[1], null);
     builder.addDoubleProperty("Module 2 voltage", () -> moduleVoltage[2], null);
     builder.addDoubleProperty("Module 3 voltage", () -> moduleVoltage[3], null);
+    builder.addDoubleProperty("Pose X", () -> driveSubsystem.getState().Pose.getX(), null);
   }
 
   private double getModuleVoltage(int module) {

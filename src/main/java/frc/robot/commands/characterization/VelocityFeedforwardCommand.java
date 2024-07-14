@@ -75,6 +75,7 @@ public class VelocityFeedforwardCommand extends Command {
   public void initialize() {
     // Reset odometry
     driveSubsystem.seedFieldRelative();
+    driveSubsystem.tareEverything();
     // Set wheels to face forward.
     driveSubsystem.setControl(zeroWheelsRequest);
 
@@ -150,7 +151,7 @@ public class VelocityFeedforwardCommand extends Command {
     builder.addDoubleProperty("Module 3 Velocity", () -> getModuleVelocity(3), null);
     builder.addDoubleProperty("Average Module Voltage", () -> averageVoltage, null);
     builder.addDoubleProperty("Final Robot Velocity", () -> finalRobotVelocity, null);
-    builder.addDoubleProperty("kV (voltage / velocity)", () -> averageVoltage / finalRobotVelocity, null);
+    builder.addDoubleProperty("kV (voltage - velocity)", () -> averageVoltage / finalRobotVelocity, null);
   }
 
   private double getModuleVoltage(int module) {

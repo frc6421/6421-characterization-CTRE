@@ -82,6 +82,7 @@ public class TuneVelocityPCommand extends Command {
 
     // Reset odometry
     driveSubsystem.seedFieldRelative();
+    driveSubsystem.tareEverything();
     // Set wheels to face forward.
     driveSubsystem.setControl(zeroWheelsRequest);
     // Set chassis speed based on the velocity set in Shuffleboard
