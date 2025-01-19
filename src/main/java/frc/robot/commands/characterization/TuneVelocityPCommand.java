@@ -5,13 +5,14 @@
 package frc.robot.commands.characterization;
 
 import com.ctre.phoenix6.configs.Slot0Configs;
-import com.ctre.phoenix6.swerve.SwerveRequest.ApplyRobotSpeeds;
-import com.ctre.phoenix6.swerve.SwerveRequest.PointWheelsAt;
+import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import edu.wpi.first.util.sendable.SendableBuilder;
-import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
@@ -23,13 +24,16 @@ public class TuneVelocityPCommand extends Command {
 
   private ChassisSpeeds setChassisSpeeds;
 
-  private final PointWheelsAt zeroWheelsRequest;
-  private final ApplyRobotSpeeds driveVelocityRequest;
-  private final ApplyRobotSpeeds stopRobotRequest;
+  private final SwerveRequest.ApplyRobotSpeeds driveVelocityRequest;
+  private final SwerveRequest.ApplyRobotSpeeds stopRobotRequest;
 
-  private double velocity;
-  private double velocityP;
-  private double finalRobotVelocity;
+  /* What to publish over networktables for static feedforward */
+  private final NetworkTableInstance inst = NetworkTableInstance.getDefault();
+
+  /* Static feedforward table publishers */
+  private final NetworkTable velocityPTable = inst.getTable("5 Velocity P");
+
+  private final DoublePublisher finalVelocityPub = velocityPTable.getDoubleTopic("Final Velocity").publish();
 
   /**
    * TODO UPDATE COMMENT
@@ -40,17 +44,15 @@ public class TuneVelocityPCommand extends Command {
 
     slot0Configs = new Slot0Configs();
 
-    zeroWheelsRequest = new PointWheelsAt();
-    driveVelocityRequest = new ApplyRobotSpeeds();
-    stopRobotRequest = new ApplyRobotSpeeds();
-
-    velocity = 0;
-    velocityP = 0;
+    driveVelocityRequest = new SwerveRequest.ApplyRobotSpeeds();
+    stopRobotRequest = new SwerveRequest.ApplyRobotSpeeds();
 
     // Use addRequirements() here to declare subsystem dependencies.
     addRequirements(drive);
 
-    Shuffleboard.getTab("5: Velocity P").add(this);
+    SmartDashboard.putData("Velocity P Command", this);
+    SmartDashboard.putNumber("5: Velocity P", 0);
+    SmartDashboard.putNumber("5: Velocity", 0);
   }
 
   // Called when the command is initially scheduled.
@@ -64,8 +66,9 @@ public class TuneVelocityPCommand extends Command {
         // get the current config from j-th module
         driveSubsystem.getModule(j).getDriveMotor().getConfigurator().refresh(slot0Configs);
         // update the P value of the config
-        slot0Configs.withKP(velocityP);
-        // apply the config to the j-th module and verify that it returns a OK StatusCode
+        slot0Configs.withKP(SmartDashboard.getNumber("5: Velocity P:", 0));
+        // apply the config to the j-th module and verify that it returns a OK
+        // StatusCode
         if (isError == driveSubsystem.getModule(j).getDriveMotor().getConfigurator().apply(slot0Configs).isError()) {
           // break the for loop if the config apply didn't work on any module.
           System.out.println("Module " + j + "config FAILED");
@@ -82,12 +85,15 @@ public class TuneVelocityPCommand extends Command {
     }
 
     // Reset odometry
-    driveSubsystem.seedFieldCentric();;
+    driveSubsystem.seedFieldCentric();
     driveSubsystem.tareEverything();
-    // Set wheels to face forward.
-    driveSubsystem.setControl(zeroWheelsRequest);
-    // Set chassis speed based on the velocity set in Shuffleboard
-    setChassisSpeeds = new ChassisSpeeds(velocity, 0, 0);
+
+    // Set chassis speed based on the velocity set in SmartDashboard. Check to make
+    // sure within max velocity of robot.
+    double xVelocity = MathUtil.clamp(SmartDashboard.getNumber("5: Velocity", 0),
+        -1 * TunerConstants.kSpeedAt12Volts.magnitude(),
+        TunerConstants.kSpeedAt12Volts.magnitude());
+    setChassisSpeeds = new ChassisSpeeds(xVelocity, 0, 0);
 
   }
 
@@ -101,7 +107,7 @@ public class TuneVelocityPCommand extends Command {
   @Override
   public void end(boolean interrupted) {
 
-    finalRobotVelocity = getRobotVelocity();
+    finalVelocityPub.set(getRobotVelocity());
 
     driveSubsystem.setControl(stopRobotRequest);
   }
@@ -111,46 +117,6 @@ public class TuneVelocityPCommand extends Command {
   public boolean isFinished() {
     // Stop the command when the robot has travelled at least 3.5 meters.
     return Math.abs(driveSubsystem.getState().Pose.getX()) > 3.5;
-  }
-
-  /**
-   * The p value to set for the velocity PID.
-   * 
-   * @param velocityP in units of voltage / rpm (?)
-   */
-  public void setVelocityP(double velocityP) {
-    this.velocityP = velocityP;
-  }
-
-  /**
-   * Set velocity to run the robot at
-   * 
-   * @param velocity x velocity of the robot (-
-   *                 {@link DriveSubsystem#SPEED_AT_12_VOLTS_METERS_PER_SEC} to
-   *                 {@link DriveSubsystem#SPEED_AT_12_VOLTS_METERS_PER_SEC})
-   */
-  public void setVelocity(double velocity) {
-    this.velocity = MathUtil.clamp(velocity, -1 * TunerConstants.kSpeedAt12Volts.magnitude(),
-    TunerConstants.kSpeedAt12Volts.magnitude());
-  }
-
-  @Override
-  public void initSendable(SendableBuilder builder) {
-    super.initSendable(builder);
-    builder.addDoubleProperty("Velocity", () -> velocity, this::setVelocity);
-    builder.addDoubleProperty("Velocity P", () -> velocityP, this::setVelocityP);
-    builder.addDoubleProperty("Module 0 Velocity", () -> getModuleVelocity(0), null);
-    builder.addDoubleProperty("Module 1 Velocity", () -> getModuleVelocity(1), null);
-    builder.addDoubleProperty("Module 2 Velocity", () -> getModuleVelocity(2), null);
-    builder.addDoubleProperty("Module 3 Velocity", () -> getModuleVelocity(3), null);
-    //builder.addDoubleProperty("Robot Velocity", () -> getRobotVelocity(), null);
-    builder.addDoubleProperty("Final Robot Velocity", () -> finalRobotVelocity, null);
-
-  }
-
-  // TODO verify module units: rpm or m/s?
-  private double getModuleVelocity(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getVelocity().getValueAsDouble();
   }
 
   /**

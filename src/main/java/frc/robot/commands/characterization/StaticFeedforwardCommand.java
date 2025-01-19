@@ -10,8 +10,10 @@ import com.ctre.phoenix6.swerve.SwerveRequest.ApplyRobotSpeeds;
 import com.ctre.phoenix6.swerve.SwerveRequest.PointWheelsAt;
 
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import edu.wpi.first.util.sendable.SendableBuilder;
-import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.networktables.DoubleArrayPublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 
@@ -25,21 +27,27 @@ public class StaticFeedforwardCommand extends Command {
   private final SwerveRequest.ApplyRobotSpeeds stopRobotRequest;
   private final SwerveRequest.ApplyRobotSpeeds driveByRobotSpeedsRequest;
 
-  private double[] moduleVoltage;
+  /* What to publish over networktables for static feedforward */
+  private final NetworkTableInstance inst = NetworkTableInstance.getDefault();
+
+  /* Static feedforward table publishers */
+  private final NetworkTable staticFeedForwardTable = inst.getTable("3 StaticFeedforward");
+
+  private final DoubleArrayPublisher moduleVoltage = staticFeedForwardTable.getDoubleArrayTopic("Module Voltage").publish();
 
   /**
    * Distance used to determine if the robot is moving.
    * </p>
    * *** May want to change value depending on data output.
    */
-  private final static double ROBOT_IS_MOVING_METERS = 0.01;
+  private final static double ROBOT_IS_MOVING_METERS = 0.001;
 
   /**
    * Used to determine the feedforward voltage needed to just get the robot to
    * move.
    * </p>
    * When done update the kS value of the Drive Motor
-   * {@link DriveSubsystem#DRIVE_GAINS}.
+   * {@link TunerConstants#DRIVE_GAINS}.
    * </p>
    * *** May need to be updated if the weight of the robot changes significantly.
    * 
@@ -54,7 +62,7 @@ public class StaticFeedforwardCommand extends Command {
     setChassisSpeeds = new ChassisSpeeds();
 
     // The change in velocity to add each robot cycle.
-    velocityDelta = new ChassisSpeeds(0.001, 0, 0);
+    velocityDelta = new ChassisSpeeds(0.0001, 0, 0);
 
     // Swerve request to make sure the wheels point in the x direction
     zeroWheelRequest = new PointWheelsAt();
@@ -65,10 +73,7 @@ public class StaticFeedforwardCommand extends Command {
     // Swerve request to use to drive the robot
     driveByRobotSpeedsRequest = new ApplyRobotSpeeds();
 
-    // Intiallize module voltage array
-    moduleVoltage = new double[4];
-
-    Shuffleboard.getTab("3: Static Feedforward").add(this);
+    SmartDashboard.putData("Static Feedforward Command", this);
   }
 
   // Called when the command is initially scheduled.
@@ -85,9 +90,7 @@ public class StaticFeedforwardCommand extends Command {
     setChassisSpeeds = new ChassisSpeeds();
 
     // Set moduleVoltage array values with intitial voltage (should be zero)
-    for (int i = 0; i < 4; ++i) {
-      moduleVoltage[i] = getModuleVoltage(i);
-    }
+    moduleVoltage.set(getModuleVoltage());
   }
 
   // Called every time the scheduler runs while the command is scheduled.
@@ -97,9 +100,7 @@ public class StaticFeedforwardCommand extends Command {
     driveSubsystem.setControl(driveByRobotSpeedsRequest.withSpeeds(setChassisSpeeds));
 
     // The current voltage of each drive motor module.
-    for (int i = 0; i < 4; ++i) {
-      moduleVoltage[i] = getModuleVoltage(i);
-    }
+    moduleVoltage.set(getModuleVoltage());
 
     // Increase chassis speed.
     setChassisSpeeds = setChassisSpeeds.plus(velocityDelta);
@@ -109,9 +110,7 @@ public class StaticFeedforwardCommand extends Command {
   @Override
   public void end(boolean interrupted) {
     // The final voltage of each drive motor module.
-    for (int i = 0; i < 4; ++i) {
-      moduleVoltage[i] = getModuleVoltage(i);
-    }
+    moduleVoltage.set(getModuleVoltage());
 
     // Stop the robot.
     driveSubsystem.setControl(stopRobotRequest);
@@ -124,18 +123,11 @@ public class StaticFeedforwardCommand extends Command {
     return Math.abs(driveSubsystem.getState().Pose.getX()) >= ROBOT_IS_MOVING_METERS;
   }
 
-  @Override
-  public void initSendable(SendableBuilder builder) {
-    super.initSendable(builder);
-    builder.addDoubleProperty("Set X velocity", () -> setChassisSpeeds.vxMetersPerSecond, null);
-    builder.addDoubleProperty("Module 0 voltage", () -> moduleVoltage[0], null);
-    builder.addDoubleProperty("Module 1 voltage", () -> moduleVoltage[1], null);
-    builder.addDoubleProperty("Module 2 voltage", () -> moduleVoltage[2], null);
-    builder.addDoubleProperty("Module 3 voltage", () -> moduleVoltage[3], null);
-    // builder.addDoubleProperty("Pose X", () -> driveSubsystem.getState().Pose.getX(), null);
-  }
-
-  private double getModuleVoltage(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getMotorVoltage().getValueAsDouble();
+  private double[] getModuleVoltage() {
+    double[] voltage = new double[4];
+    for (int i = 0; i < 4; ++i) {
+      voltage[i] = driveSubsystem.getModule(i).getDriveMotor().getMotorVoltage().getValueAsDouble();
+    }
+    return voltage;
   }
 }

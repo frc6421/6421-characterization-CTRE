@@ -15,6 +15,7 @@ import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.math.trajectory.TrajectoryConfig;
 import edu.wpi.first.math.trajectory.TrajectoryGenerator;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.wpilibj.DataLogManager;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SequentialCommandGroup;
 import frc.robot.Constants.AutoConstants;
@@ -52,9 +53,9 @@ public class DriveToPositionCommand extends SequentialCommandGroup {
         Commands.runOnce(() -> driveSubsystem.resetPose(driveToTwoOne.getInitialPose()), driveSubsystem),
         driveSubsystem.runTrajectoryCommand(driveToTwoOne),
         Commands.waitSeconds(5),
-        Commands.print(driveSubsystem.getState().Pose.toString()),
+        Commands.runOnce(()-> DataLogManager.log(driveSubsystem.getState().Pose.toString())),
         driveSubsystem.runTrajectoryCommand(driveToZeroZero),
         Commands.runOnce(() -> driveSubsystem.applyRequest(() -> new ApplyRobotSpeeds()), driveSubsystem),
-        Commands.print(driveSubsystem.getState().Pose.toString()));
+        Commands.runOnce(()-> DataLogManager.log(driveSubsystem.getState().Pose.toString())));
   }
 }

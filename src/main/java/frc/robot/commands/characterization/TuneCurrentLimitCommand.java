@@ -5,13 +5,16 @@
 package frc.robot.commands.characterization;
 
 
-import com.ctre.phoenix6.swerve.SwerveRequest.ApplyRobotSpeeds;
-import com.ctre.phoenix6.swerve.SwerveRequest.PointWheelsAt;
+
+import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import edu.wpi.first.util.sendable.SendableBuilder;
-import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.networktables.DoubleArrayPublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 
 public class TuneCurrentLimitCommand extends Command {
@@ -21,12 +24,19 @@ public class TuneCurrentLimitCommand extends Command {
   private final ChassisSpeeds velocityDelta;
   private ChassisSpeeds setChassisSpeeds;
 
-  private final PointWheelsAt zeroWheelRequest;
-  private final ApplyRobotSpeeds stopRobotRequest;
-  private final ApplyRobotSpeeds driveByChassisSpeedsRequest;
+  private final SwerveRequest.PointWheelsAt zeroWheelRequest;
+  private final SwerveRequest.ApplyRobotSpeeds stopRobotRequest;
+  private final SwerveRequest.ApplyRobotSpeeds driveByChassisSpeedsRequest;
 
-  private double[] moduleStatorCurrent;
-  private double[] moduleSupplyCurrent;
+    /* What to publish over networktables for static feedforward */
+  private final NetworkTableInstance inst = NetworkTableInstance.getDefault();
+
+  /* Static feedforward table publishers */
+  private final NetworkTable currentLimitTable = inst.getTable("2 CurrentLimit");
+
+  private final DoubleArrayPublisher statorCurrentPub = currentLimitTable.getDoubleArrayTopic("Stator Current").publish();
+  private final DoubleArrayPublisher supplyCurrentPub = currentLimitTable.getDoubleArrayTopic("Supply Current").publish();
+
   
   // Constants \\
   // TODO determine the velocity to set which means the wheels are slipping.
@@ -38,7 +48,7 @@ public class TuneCurrentLimitCommand extends Command {
    * </p>
    * To use place robot against wall or other unmovable barrier and start command.
    * </p>
-   * When done update the value in {@link DriveSubsystem#SLIP_CURRENT_AMPS}
+   * When done update the value in {@link TunerConstants#kSlipCurrent}
    * </p>
    * *** May need to be updated as treads wear and/or are replaced.
    * 
@@ -55,17 +65,15 @@ public class TuneCurrentLimitCommand extends Command {
     setChassisSpeeds = new ChassisSpeeds();
 
     // Swerve request to make sure the wheels point in the x direction
-    zeroWheelRequest = new PointWheelsAt();
+    zeroWheelRequest = new SwerveRequest.PointWheelsAt();
     // Swerve request to stop the robot
-    stopRobotRequest = new ApplyRobotSpeeds();
+    stopRobotRequest = new SwerveRequest.ApplyRobotSpeeds();
     // Swerve request to use to drive the robot
-    driveByChassisSpeedsRequest = new ApplyRobotSpeeds();
+    driveByChassisSpeedsRequest = new SwerveRequest.ApplyRobotSpeeds();
 
-    moduleStatorCurrent = new double[4];
-    moduleSupplyCurrent = new double[4];
 
-    // Add command to shuffleboard.
-    Shuffleboard.getTab("2: Current Limits").add(this);
+    // Add command to SmartDashboard.
+    SmartDashboard.putData("Current Limit Command", this);
   }
 
   // Called when the command is initially scheduled.
@@ -81,11 +89,8 @@ public class TuneCurrentLimitCommand extends Command {
 
     // Set moduleStatorCurrent and moduleSupplyCurrent array values with intitial
     // currents (should be zero)
-    for (int i = 0; i < 4; ++i) {
-      moduleStatorCurrent[i] = getmoduleStatorCurrent(i);
-      moduleSupplyCurrent[i] = getModuleSupplyCurrent(i);
-    }
-
+    statorCurrentPub.set(getmoduleStatorCurrent());
+    supplyCurrentPub.set(getModuleSupplyCurrent());
   }
 
   // Called every time the scheduler runs while the command is scheduled.
@@ -95,10 +100,8 @@ public class TuneCurrentLimitCommand extends Command {
     driveSubsystem.setControl(driveByChassisSpeedsRequest.withSpeeds(setChassisSpeeds));
 
     // Get the current stator and supply currents for each module's drive motor
-    for (int i = 0; i < 4; ++i) {
-      moduleStatorCurrent[i] = getmoduleStatorCurrent(i);
-      moduleSupplyCurrent[i] = getModuleSupplyCurrent(i);
-    }
+    statorCurrentPub.set(getmoduleStatorCurrent());
+    supplyCurrentPub.set(getModuleSupplyCurrent());
 
     // Increament the X velocity.
     setChassisSpeeds = setChassisSpeeds.plus(velocityDelta);
@@ -108,10 +111,8 @@ public class TuneCurrentLimitCommand extends Command {
   @Override
   public void end(boolean interrupted) {
     // Get the final stator and supply currents for each module's drive motor
-    for (int i = 0; i < 4; ++i) {
-      moduleStatorCurrent[i] = getmoduleStatorCurrent(i);
-      moduleSupplyCurrent[i] = getModuleSupplyCurrent(i);
-    }
+    statorCurrentPub.set(getmoduleStatorCurrent());
+    supplyCurrentPub.set(getModuleSupplyCurrent());
 
     // Stop the motors.
     driveSubsystem.setControl(stopRobotRequest);
@@ -121,45 +122,41 @@ public class TuneCurrentLimitCommand extends Command {
   // Returns true when the command should end.
   @Override
   public boolean isFinished() {
-    // Stop command if all wheels are slipping
+    // Stop command if any wheel is slipping
     return areWheelsSlipping();
   }
 
-  @Override
-  public void initSendable(SendableBuilder builder) {
-    super.initSendable(builder);
-    builder.addDoubleProperty("Set X velocity", () -> setChassisSpeeds.vxMetersPerSecond, null);
-    builder.addDoubleProperty("Module 0 Stator Current", () -> moduleStatorCurrent[0], null);
-    builder.addDoubleProperty("Module 0 Supply Current", () -> moduleSupplyCurrent[0], null);
-    builder.addDoubleProperty("Module 1 Stator Current", () -> moduleStatorCurrent[1], null);
-    builder.addDoubleProperty("Module 1 Supply Current", () -> moduleSupplyCurrent[1], null);
-    builder.addDoubleProperty("Module 2 Stator Current", () -> moduleStatorCurrent[2], null);
-    builder.addDoubleProperty("Module 2 Supply Current", () -> moduleSupplyCurrent[2], null);
-    builder.addDoubleProperty("Module 3 Stator Current", () -> moduleStatorCurrent[3], null);
-    builder.addDoubleProperty("Module 3 Supply Current", () -> moduleSupplyCurrent[3], null);
-  }
-
   /**
-   * Determine if all wheels are slipping. A wheel is slipping if the velocity is
+   * Determine if any wheels is slipping. A wheel is slipping if the velocity is
    * higher than {@link TuneCurrentLimitCommand#VELOCITY_LIMIT}.
    * 
-   * @return true if all wheels slipping, otherwise false
+   * @return true if any wheel is slipping, otherwise false
    */
   private boolean areWheelsSlipping() {
-    // Cycle through all module drive motors to see if all wheels are slipping.
+    // Cycle through all module drive motors to see if any wheels is slipping.
     for (int i = 0; i < 4; ++i) {
-      if (driveSubsystem.getModule(i).getCurrentState().speedMetersPerSecond <= VELOCITY_LIMIT) {
-        return false;
+      if (driveSubsystem.getModule(i).getCurrentState().speedMetersPerSecond >= VELOCITY_LIMIT) {
+        return true;
       }
     }
-    return true;
+    return false;
   }
 
-  private double getmoduleStatorCurrent(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getStatorCurrent().getValueAsDouble();
+  private double[] getmoduleStatorCurrent() {
+    double[] statorCurrent = new double[4];
+    for (int i = 0; i < 4; ++i) {
+      statorCurrent[i] = driveSubsystem.getModule(i).getDriveMotor().getStatorCurrent().getValueAsDouble();
+    }
+
+    return statorCurrent;
   }
 
-  private double getModuleSupplyCurrent(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getSupplyCurrent().getValueAsDouble();
+  private double[] getModuleSupplyCurrent() {
+    double[] supplyCurrent = new double[4];
+    for (int i = 0; i < 4; ++i) {
+      supplyCurrent[i] = driveSubsystem.getModule(i).getDriveMotor().getSupplyCurrent().getValueAsDouble();
+    }
+
+    return supplyCurrent;
   }
 }

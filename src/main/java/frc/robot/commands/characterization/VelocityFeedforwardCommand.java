@@ -5,38 +5,35 @@
 package frc.robot.commands.characterization;
 
 import com.ctre.phoenix6.swerve.SwerveRequest.ApplyRobotSpeeds;
-import com.ctre.phoenix6.swerve.SwerveRequest.PointWheelsAt;
 
-import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
-import edu.wpi.first.util.sendable.SendableBuilder;
-import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.networktables.DoubleArrayPublisher;
+import edu.wpi.first.networktables.DoubleEntry;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
-import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 
 public class VelocityFeedforwardCommand extends Command {
   private final CommandSwerveDrivetrain driveSubsystem;
 
-  private ChassisSpeeds setChassisSpeeds;
+  private ChassisSpeeds setRobotSpeeds;
 
-  private final PointWheelsAt zeroWheelsRequest;
   private final ApplyRobotSpeeds driveVelocityRequest;
   private final ApplyRobotSpeeds stopRobotRequest;
 
-  /**
-   * The velocity to drive the robot in this command.
-   * </p>
-   * Can be positive or negative but should be less than max robot velocity
-   */
-  private double setRobotVelocity;
-  private double finalRobotVelocity;
+  /* What to publish over networktables for static feedforward */
+  private final NetworkTableInstance inst = NetworkTableInstance.getDefault();
 
-  // Used to verify voltage and velocity are consistant between modules.
-  private double[] moduleVoltage;
-  private double[] moduleVelocity;
+  /* Static feedforward table publishers */
+  private final NetworkTable velocityFeedForwardTable = inst.getTable("4 VelocityFeedforward");
 
-  private double averageVoltage;
+  private final DoubleArrayPublisher moduleVoltage = velocityFeedForwardTable.getDoubleArrayTopic("Module Voltage").publish();
+  private final DoubleArrayPublisher moduleVelocity = velocityFeedForwardTable.getDoubleArrayTopic("Module Velocity").publish();
+  private final DoubleEntry averageVoltage = velocityFeedForwardTable.getDoubleTopic("Average Voltage").getEntry(0.0);
+  private final DoublePublisher kV = velocityFeedForwardTable.getDoubleTopic("kV").publish();
 
   /**
    * Used to determine the feed forward voltage needed to get the robot moving
@@ -46,8 +43,8 @@ public class VelocityFeedforwardCommand extends Command {
    * backward, to verify that the data appears good. kV should be fairly linear
    * over the range of velocities.
    * </p>
-   * When done update the {@link DriveSubsystem#kV} value of the Drive Motor
-   * {@link DriveSubsystem#DRIVE_GAINS}.
+   * When done update the {@link .withkV} value of the Drive Motor Gains in
+   * {@link generated.TunerConstants#driveGains}.
    * 
    * @param drive the drive subsystem used with command.
    */
@@ -56,19 +53,13 @@ public class VelocityFeedforwardCommand extends Command {
     // Use addRequirements() here to declare subsystem dependencies.
     addRequirements(drive);
 
-    setRobotVelocity = 0;
-
-    moduleVoltage = new double[4];
-    moduleVelocity = new double[4];
-
-    // Swerve request to make sure the wheels point in the x direction
-    zeroWheelsRequest = new PointWheelsAt();
     // Swerve request to use to drive the robot
     driveVelocityRequest = new ApplyRobotSpeeds();
     // Swerve request to stop the robot
     stopRobotRequest = new ApplyRobotSpeeds();
 
-    Shuffleboard.getTab("4: Velocity Feedforward").add(this);
+    SmartDashboard.putData("Velocity Feedforward Command", this);
+    SmartDashboard.putNumber("4: Set Velocity", 0);
   }
 
   // Called when the command is initially scheduled.
@@ -77,44 +68,29 @@ public class VelocityFeedforwardCommand extends Command {
     // Reset odometry
     driveSubsystem.seedFieldCentric();
     driveSubsystem.tareEverything();
-    // Set wheels to face forward.
-    driveSubsystem.setControl(zeroWheelsRequest);
 
     // Set moduleVoltage and moduleVelocity array values with intitial voltage and
     // velocity (should be zero)
-    for (int i = 0; i < 4; ++i) {
-      moduleVoltage[i] = getModuleVoltage(i);
-      moduleVelocity[i] = getModuleVelocity(i);
-    }
-
-    averageVoltage = 0;
-
-    // Set robot velocity (should be zero)
-    finalRobotVelocity = getRobotVelocity();
+      moduleVoltage.set(getModuleVoltage());
+      moduleVelocity.set(getModuleVelocity());
 
     // Set chassis speed based on the velocity set in Shuffleboard
-    setChassisSpeeds = new ChassisSpeeds(setRobotVelocity, 0, 0);
+    setRobotSpeeds = new ChassisSpeeds(SmartDashboard.getNumber("4: Set Velocity", 0), 0, 0);
   }
 
   // Called every time the scheduler runs while the command is scheduled.
   @Override
   public void execute() {
-    driveSubsystem.setControl(driveVelocityRequest.withSpeeds(setChassisSpeeds));
+    driveSubsystem.setControl(driveVelocityRequest.withSpeeds(setRobotSpeeds));
   }
 
   // Called once the command ends or is interrupted.
   @Override
   public void end(boolean interrupted) {
-    var sumVoltage = 0.0;
-    // Get voltage and velocity values for each module drive motor
-    for (int i = 0; i < 4; ++i) {
-      sumVoltage += moduleVoltage[i] = getModuleVoltage(i);
-      moduleVelocity[i] = getModuleVelocity(i);
-    }
 
-    averageVoltage = sumVoltage / 4;
-
-    finalRobotVelocity = getRobotVelocity();
+    moduleVoltage.set(getModuleVoltage());
+    moduleVelocity.set(getModuleVelocity());
+    kV.set(averageVoltage.getAsDouble()/getRobotVelocity());
 
     driveSubsystem.setControl(stopRobotRequest);
   }
@@ -126,42 +102,25 @@ public class VelocityFeedforwardCommand extends Command {
     return Math.abs(driveSubsystem.getState().Pose.getX()) > 3.5;
   }
 
-  /**
-   * Set velocity to run the robot at
-   * 
-   * @param velocity x velocity of the robot (-
-   *                 {@link DriveSubsystem#SPEED_AT_12_VOLTS_METERS_PER_SEC} to
-   *                 {@link DriveSubsystem#SPEED_AT_12_VOLTS_METERS_PER_SEC})
-   */
-  public void setSetRobotVelocity(double velocity) {
-    this.setRobotVelocity = MathUtil.clamp(velocity, -1 * TunerConstants.kSpeedAt12Volts.magnitude(),
-        TunerConstants.kSpeedAt12Volts.magnitude());
+  private double[] getModuleVoltage() {
+    double voltageSum = 0.0;
+    double[] voltage = new double[4];
+    for (int i = 0; i < 4; ++i) {
+      voltage[i] = driveSubsystem.getModule(i).getDriveMotor().getMotorVoltage().getValueAsDouble();
+      voltageSum =+ voltage[i];
+    }
+    averageVoltage.set(voltageSum/4);
+
+    return voltage;
   }
 
-  @Override
-  public void initSendable(SendableBuilder builder) {
-    super.initSendable(builder);
-    builder.addDoubleProperty("Set X Velocity", () -> setRobotVelocity, this::setSetRobotVelocity);
-    builder.addDoubleProperty("Module 0 Voltage", () -> getModuleVoltage(0), null);
-    builder.addDoubleProperty("Module 0 Velocity", () -> getModuleVelocity(0), null);
-    builder.addDoubleProperty("Module 1 Voltage", () -> getModuleVoltage(1), null);
-    builder.addDoubleProperty("Module 1 Velocity", () -> getModuleVelocity(1), null);
-    builder.addDoubleProperty("Module 2 Voltage", () -> getModuleVoltage(2), null);
-    builder.addDoubleProperty("Module 2 Velocity", () -> getModuleVelocity(2), null);
-    builder.addDoubleProperty("Module 3 Voltage", () -> getModuleVoltage(3), null);
-    builder.addDoubleProperty("Module 3 Velocity", () -> getModuleVelocity(3), null);
-    builder.addDoubleProperty("Average Module Voltage", () -> averageVoltage, null);
-    builder.addDoubleProperty("Final Robot Velocity", () -> finalRobotVelocity, null);
-    builder.addDoubleProperty("kV (voltage - velocity)", () -> averageVoltage / finalRobotVelocity, null);
-  }
+  private double[] getModuleVelocity() {
+    double[] velocity = new double[4];
+    for (int i = 0; i < 4; ++i) {
+      velocity[i] = driveSubsystem.getModule(i).getDriveMotor().getVelocity().getValueAsDouble();
+    }
 
-  private double getModuleVoltage(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getMotorVoltage().getValueAsDouble();
-  }
-
-  // TODO verify module units: rpm or m/s?
-  private double getModuleVelocity(int module) {
-    return driveSubsystem.getModule(module).getDriveMotor().getVelocity().getValueAsDouble();
+    return velocity;
   }
 
   /**
